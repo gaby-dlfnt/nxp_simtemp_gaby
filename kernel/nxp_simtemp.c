@@ -121,56 +121,77 @@ static ssize_t simtemp_read(struct file *file, char __user *buf,
                             size_t count, loff_t *ppos)
 {
     struct simtemp_sample sample;
+    static int temp_mC = 20000;   /* current simulated temperature */
+    static bool ramp_up = true;   /* direction for ramp mode */
+    int min_temp = 10000;         /* 10°C */
+    int max_temp = 50000;         /* 50°C */
+    int step_normal = 200;        /* 0.2°C per sample */
+    int step_ramp = 500;          /* 0.5°C per sample */
     u32 rand_val;
-    int min_temp = 10000;   /* 10.000 m°C */
-    int max_temp = 50000;   /* 50.000 m°C */
-    int range = max_temp - min_temp;
-    static int ramp_val = 20000;
 
-    /* Generate temp based on mode */
+    mutex_lock(&simtemp_lock);
+
     switch (simtemp_mode) {
     case MODE_NORMAL:
-        rand_val = get_random_u32() % (range + 1);
-        sample.temp_mC = min_temp + rand_val;
+        /* Slowly increase until reaching threshold, then fluctuate */
+        if (temp_mC < threshold_mC - 200) {
+            temp_mC += step_normal;
+        } else if (temp_mC > threshold_mC + 200) {
+            temp_mC -= step_normal;
+        } else {
+            /* Small fluctuation around the target */
+            get_random_bytes(&rand_val, sizeof(rand_val));
+            temp_mC += (int)(rand_val % 400) - 200; /* +/-0.2°C noise */
+        }
+
+        /* clamp temperature */
+        if (temp_mC < min_temp) temp_mC = min_temp;
+        if (temp_mC > max_temp) temp_mC = max_temp;
         break;
+
     case MODE_NOISY:
-        rand_val = get_random_u32() % 5000; /* +/- 5°C noise */
-        sample.temp_mC = 25000 + ((int)rand_val - 2500);
+        /* Random temp around 25°C with noise */
+        get_random_bytes(&rand_val, sizeof(rand_val));
+        temp_mC = 25000 + ((int)(rand_val % 10000) - 5000);
         break;
+
     case MODE_RAMP:
-        ramp_val += 500; /* +0.5°C per sample */
-        if (ramp_val > max_temp)
-            ramp_val = min_temp;
-        sample.temp_mC = ramp_val;
+        /* Ramp up and down */
+        if (ramp_up)
+            temp_mC += step_ramp;
+        else
+            temp_mC -= step_ramp;
+
+        if (temp_mC >= max_temp) {
+            temp_mC = max_temp;
+            ramp_up = false;
+        } else if (temp_mC <= min_temp) {
+            temp_mC = min_temp;
+            ramp_up = true;
+        }
         break;
     }
 
+    sample.temp_mC = temp_mC;
     sample.timestamp_ns = ktime_get_ns();
-    sample.flags = 0x1; /* new sample flag */
+    sample.flags = 0x1;
 
-    /* update counters */
-    mutex_lock(&simtemp_lock);
+    /* Update stats */
     sample_count++;
     if (sample.temp_mC > threshold_mC)
         alert_count++;
+
     mutex_unlock(&simtemp_lock);
 
-    if (count < sizeof(sample)) {
-        mutex_lock(&simtemp_lock);
-        last_error++;
-        mutex_unlock(&simtemp_lock);
+    if (count < sizeof(sample))
         return -EINVAL;
-    }
 
-    if (copy_to_user(buf, &sample, sizeof(sample))) {
-        mutex_lock(&simtemp_lock);
-        last_error++;
-        mutex_unlock(&simtemp_lock);
+    if (copy_to_user(buf, &sample, sizeof(sample)))
         return -EFAULT;
-    }
 
     return sizeof(sample);
 }
+
 
 static const struct file_operations simtemp_fops = {
     .owner = THIS_MODULE,
