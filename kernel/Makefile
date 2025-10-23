@@ -1,4 +1,3 @@
-# Simple out-of-tree Makefile
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(shell pwd)
 
