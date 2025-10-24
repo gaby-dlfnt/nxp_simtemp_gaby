@@ -2,8 +2,11 @@
 
 # client_control.sh - Interactive control for simtemp temperature monitoring
 
+KERNEL_MODULE="nxp_simtemp.ko"
+MODULE_NAME="nxp_simtemp"
+
 show_help() {
-    echo "=== SimTemp Control Script ==="
+    echo "=== NXP SimTemp Control Script ==="
     echo "Usage: $0 [OPTION]"
     echo ""
     echo "Options:"
@@ -14,13 +17,15 @@ show_help() {
     echo "  5              Run client program"
     echo "  6              Reset alarm count"
     echo "  7              Show device info"
+    echo "  8              Load kernel module"
+    echo "  9              Unload kernel module"
     echo "  -h, --help     Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 1           # Change threshold"
     echo "  $0 3           # Change mode"
     echo "  $0 4           # Show current values"
-    echo "  $0 6           # Reset alarm count"
+    echo "  $0 8           # Load module with default params"
 }
 
 show_current_values() {
@@ -54,10 +59,64 @@ show_current_values() {
 check_device_available() {
     if [ ! -c "/dev/simtemp" ]; then
         echo "Error: /dev/simtemp device not found!"
-        echo "Please make sure the nxp_simtemp module is loaded."
+        echo "The kernel module may not be loaded."
+        echo "Use option 8 to load the module first."
         return 1
     fi
     return 0
+}
+
+load_kernel_module() {
+    echo "Loading kernel module..."
+    
+    # Check if module is already loaded
+    if lsmod | grep -q "$MODULE_NAME"; then
+        echo "Module is already loaded. Unloading first..."
+        sudo rmmod $MODULE_NAME
+    fi
+    
+    # Ask for parameters or use defaults
+    read -p "Enter sampling period [200]: " sampling
+    sampling=${sampling:-200}
+    
+    read -p "Enter threshold [40000]: " threshold
+    threshold=${threshold:-40000}
+    
+    echo "Available modes:"
+    echo "  0) normal"
+    echo "  1) noisy"
+    echo "  2) ramp"
+    read -p "Select mode [1]: " mode
+    mode=${mode:-1}
+    
+    echo "Loading module with: sampling_ms=$sampling, threshold_mC=$threshold, default_mode=$mode"
+    
+    sudo insmod $KERNEL_MODULE sampling_ms=$sampling threshold_mC=$threshold default_mode=$mode
+    
+    if [ $? -eq 0 ]; then
+        echo "Module loaded successfully!"
+        # Auto-setup permissions after loading
+        ./setup_permissions.sh
+    else
+        echo "Failed to load module"
+        dmesg | tail -5
+    fi
+}
+
+unload_kernel_module() {
+    echo "Unloading kernel module..."
+    
+    if lsmod | grep -q "$MODULE_NAME"; then
+        sudo rmmod $MODULE_NAME
+        if [ $? -eq 0 ]; then
+            echo "Module unloaded successfully!"
+        else
+            echo "Failed to unload module"
+            dmesg | tail -5
+        fi
+    else
+        echo "Module is not loaded"
+    fi
 }
 
 change_threshold() {
@@ -169,6 +228,21 @@ reset_alarms() {
 show_device_info() {
     echo "=== Device Information ==="
     
+    # Check if module is loaded
+    if lsmod | grep -q "$MODULE_NAME"; then
+        echo "Module: $MODULE_NAME - Loaded"
+        echo "Module parameters:"
+        if [ -d "/sys/module/$MODULE_NAME/parameters" ]; then
+            for param in /sys/module/$MODULE_NAME/parameters/*; do
+                param_name=$(basename $param)
+                param_value=$(cat $param 2>/dev/null)
+                echo "  $param_name = $param_value"
+            done
+        fi
+    else
+        echo "Module: $MODULE_NAME - Not loaded"
+    fi
+    
     # Check if device exists
     if [ -c "/dev/simtemp" ]; then
         echo "Device: /dev/simtemp - Present"
@@ -186,15 +260,6 @@ show_device_info() {
             echo "/sys/class/misc/simtemp/$entry - Not found"
         fi
     done
-    
-    echo ""
-    echo "=== Module Information ==="
-    if lsmod | grep -q "nxp_simtemp\|simtemp"; then
-        echo "Module is loaded"
-        lsmod | grep "nxp_simtemp\|simtemp"
-    else
-        echo "Module is not loaded"
-    fi
 }
 
 # Main script logic
@@ -202,7 +267,7 @@ if [ $# -eq 0 ]; then
     # Interactive mode if no arguments provided
     while true; do
         echo ""
-        echo "=== SimTemp Control Menu ==="
+        echo "=== NXP SimTemp Control Menu ==="
         echo "1) Change threshold"
         echo "2) Change sampling period" 
         echo "3) Change mode"
@@ -210,8 +275,10 @@ if [ $# -eq 0 ]; then
         echo "5) Run client program"
         echo "6) Reset alarm count"
         echo "7) Show device info"
-        echo "8) Exit"
-        read -p "Select option (1-8): " choice
+        echo "8) Load kernel module"
+        echo "9) Unload kernel module"
+        echo "10) Exit"
+        read -p "Select option (1-10): " choice
         
         case $choice in
             1) change_threshold ;;
@@ -221,7 +288,9 @@ if [ $# -eq 0 ]; then
             5) run_client ;;
             6) reset_alarms ;;
             7) show_device_info ;;
-            8) echo "Goodbye!"; exit 0 ;;
+            8) load_kernel_module ;;
+            9) unload_kernel_module ;;
+            10) echo "Goodbye!"; exit 0 ;;
             *) echo "Invalid option. Please try again." ;;
         esac
     done
@@ -235,6 +304,8 @@ else
         5) run_client ;;
         6) reset_alarms ;;
         7) show_device_info ;;
+        8) load_kernel_module ;;
+        9) unload_kernel_module ;;
         -h|--help) show_help ;;
         *) 
             echo "Error: Invalid option '$1'"
