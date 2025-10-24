@@ -256,13 +256,11 @@ For issues and questions:
 # 1. Build and load module
 sudo insmod nxp_simtemp.ko
 
-# 2. Set permissions
-sudo chmod 666 /dev/simtemp
-sudo chmod 666 /sys/class/misc/simtemp/*
+# 2. Setup permissions
+./setup_permissions.sh
 
-# 3. Configure
-echo "noisy" > /sys/class/misc/simtemp/mode
-echo "500" > /sys/class/misc/simtemp/sampling_ms
+# 3. Control the temperature monitoring system
+./client_control.sh
 
 # 4. Use with application
 ./client

@@ -109,12 +109,36 @@ static ssize_t stats_show(struct device *dev,
                    sample_count, alert_count, last_error);
 }
 
+/* reset alerts - new function */
+static ssize_t reset_alerts_store(struct device *dev,
+                                  struct device_attribute *attr,
+                                  const char *buf, size_t count)
+{
+    int val;
+    
+    if (kstrtoint(buf, 10, &val))
+        return -EINVAL;
+    
+    // Only reset if value is 1 (as a safety measure)
+    if (val == 1) {
+        mutex_lock(&simtemp_lock);
+        alert_count = 0;
+        sample_count = 0;  // Optional: reset sample count too
+        last_error = 0;    // Optional: reset errors too
+        mutex_unlock(&simtemp_lock);
+        pr_info("simtemp: alerts counter reset\n");
+    }
+    
+    return count;
+}
+
+
 /* define the attributes */
 static DEVICE_ATTR_RW(sampling_ms);
 static DEVICE_ATTR_RW(threshold_mC);
 static DEVICE_ATTR_RW(mode);
 static DEVICE_ATTR_RO(stats);
-
+static DEVICE_ATTR_WO(reset_alerts);
 /* ------------ file operations ------------ */
 
 static ssize_t simtemp_read(struct file *file, char __user *buf,
@@ -221,6 +245,7 @@ static int __init simtemp_init(void)
     device_create_file(simtemp_device, &dev_attr_threshold_mC);
     device_create_file(simtemp_device, &dev_attr_mode);
     device_create_file(simtemp_device, &dev_attr_stats);
+    device_create_file(simtemp_device, &dev_attr_reset_alerts);
 
     pr_info("simtemp: loaded\n");
     return 0;
@@ -232,6 +257,7 @@ static void __exit simtemp_exit(void)
     device_remove_file(simtemp_device, &dev_attr_threshold_mC);
     device_remove_file(simtemp_device, &dev_attr_mode);
     device_remove_file(simtemp_device, &dev_attr_stats);
+    device_remove_file(simtemp_device, &dev_attr_reset_alerts);
 
     misc_deregister(&simtemp_dev);
     pr_info("simtemp: unloaded\n");
