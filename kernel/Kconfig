@@ -1,0 +1,9 @@
+config NXP_SIMTEMP
+    tristate "Simulated Temperature device driver"
+    help
+      This driver provides a simulated temperature device that generates
+      temperature readings with several selectable modes (normal, noisy, ramp).
+      It creates sysfs attributes to control sampling rate, thresholds, and mode.
+
+      To build this as a module, choose M here: it will be called nxp_simtemp.ko.
+
