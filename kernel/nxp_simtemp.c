@@ -68,7 +68,8 @@ static const struct file_operations simtemp_fops = {
 };
 
 /* ------------ device tree parsing ------------ */
-static int simtemp_parse_dt(struct device *dev)
+
+static int __maybe_unused simtemp_parse_dt(struct device *dev)
 {
     struct device_node *np = dev->of_node;
     const char *mode_str;
@@ -108,22 +109,46 @@ static int simtemp_parse_dt(struct device *dev)
     return 0;
 }
 
-/* ------------ platform driver ------------ */
+/* Platform driver probe function */
 static int nxp_simtemp_probe(struct platform_device *pdev)
 {
     struct device *dev = &pdev->dev;
+    struct device_node *np = dev->of_node;
+    const char *mode_str;
     int ret;
 
     dev_info(dev, "NXP SimTemp probe started\n");
 
-    /* Use module parameters if no device tree */
-    if (!dev->of_node) {
+    /* Parse device tree parameters if available */
+    if (np) {
+        ret = of_property_read_u32(np, "sampling-period-ms", &sampling_ms);
+        if (ret && ret != -EINVAL)
+            dev_warn(dev, "Could not read sampling-period-ms, using default\n");
+
+        ret = of_property_read_u32(np, "temperature-threshold-mc", &threshold_mC);
+        if (ret && ret != -EINVAL)
+            dev_warn(dev, "Could not read temperature-threshold-mc, using default\n");
+
+        ret = of_property_read_string(np, "default-mode", &mode_str);
+        if (!ret) {
+            int i;
+            for (i = 0; i < ARRAY_SIZE(mode_names); i++) {
+                if (sysfs_streq(mode_str, mode_names[i])) {
+                    simtemp_mode = i;
+                    break;
+                }
+            }
+            if (i == ARRAY_SIZE(mode_names))
+                dev_warn(dev, "Invalid default-mode: %s, using default\n", mode_str);
+        }
+        
+        dev_info(dev, "DT params: sampling=%dms, threshold=%dmC, mode=%s\n",
+                 sampling_ms, threshold_mC, mode_names[simtemp_mode]);
+    } else {
+        /* Use module parameters if no device tree */
         simtemp_mode = default_mode;
         dev_info(dev, "Using module params: sampling=%dms, threshold=%dmC, mode=%s\n",
                  sampling_ms, threshold_mC, mode_names[default_mode]);
-    } else {
-        /* Parse device tree parameters */
-        simtemp_parse_dt(dev);
     }
 
     /* Initialize misc device */
@@ -147,13 +172,12 @@ static int nxp_simtemp_probe(struct platform_device *pdev)
     device_create_file(simtemp_device, &dev_attr_stats);
     device_create_file(simtemp_device, &dev_attr_reset_alerts);
 
-    dev_info(dev, "NXP SimTemp loaded (sampling=%dms, threshold=%dmC, mode=%s)\n",
-             sampling_ms, threshold_mC, mode_names[simtemp_mode]);
+    dev_info(dev, "NXP SimTemp loaded successfully\n");
 
     return 0;
 }
 
-static int nxp_simtemp_remove(struct platform_device *pdev)
+static void nxp_simtemp_remove(struct platform_device *pdev)
 {
     device_remove_file(simtemp_device, &dev_attr_sampling_ms);
     device_remove_file(simtemp_device, &dev_attr_threshold_mC);
@@ -164,21 +188,18 @@ static int nxp_simtemp_remove(struct platform_device *pdev)
     misc_deregister(&simtemp_dev);
 
     dev_info(&pdev->dev, "NXP SimTemp unloaded\n");
-    return 0;
 }
 
 /* Device Tree match table */
 static const struct of_device_id nxp_simtemp_of_match[] = {
     { .compatible = "nxp,simtemp" },
-    { .compatible = "simtemp" },
     { /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, nxp_simtemp_of_match);
 
-/* Platform driver structure */
 static struct platform_driver nxp_simtemp_driver = {
     .probe = nxp_simtemp_probe,
-    .remove = nxp_simtemp_remove,
+    .remove = nxp_simtemp_remove,  // Now this matches the expected type
     .driver = {
         .name = "nxp-simtemp",
         .of_match_table = nxp_simtemp_of_match,
@@ -344,32 +365,21 @@ static ssize_t simtemp_read(struct file *file, char __user *buf,
     return sizeof(sample);
 }
 
-/* ------------ module init/exit ------------ */
+/* Module init/exit */
 static int __init nxp_simtemp_init(void)
 {
-    int ret;
-
-    pr_info("NXP SimTemp driver initializing\n");
-
-    ret = platform_driver_register(&nxp_simtemp_driver);
-    if (ret) {
-        pr_err("Failed to register platform driver: %d\n", ret);
-        return ret;
-    }
-
-    return 0;
+    return platform_driver_register(&nxp_simtemp_driver);
 }
 
 static void __exit nxp_simtemp_exit(void)
 {
     platform_driver_unregister(&nxp_simtemp_driver);
-    pr_info("NXP SimTemp driver unloaded\n");
 }
 
 module_init(nxp_simtemp_init);
 module_exit(nxp_simtemp_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Gabriela de la Fuente");
-MODULE_DESCRIPTION("NXP Simulated temperature device with device tree support");
+MODULE_AUTHOR("Gabriela de la Fuente <gabydelafuente15@gmail.com> ");
+MODULE_DESCRIPTION("NXP Simulated temperature device");
 MODULE_ALIAS("platform:nxp-simtemp");

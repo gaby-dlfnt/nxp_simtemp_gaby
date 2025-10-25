@@ -24,15 +24,20 @@ A Linux kernel module that provides a simulated temperature device with configur
 ```bash
 sudo apt update
 sudo apt install linux-source build-essential libncurses-dev flex bison libssl-dev
+sudo apt-get install gcc-aarch64-linux-gnu
 ```
 
 ---
 
 ### Build from Source
 
-#### 1. Extract Kernel Source
+#### 1. Enter to the Kernel Source
 ```bash
 cd /usr/src
+#Find your linux folder
+cd linux-hwe-6.8-6.8.0
+# or extract it 
+sudo apt install linux-source
 sudo tar xjf linux-source-*.tar.bz2
 cd linux-source-*
 ```
@@ -43,7 +48,7 @@ cd linux-source-*
 sudo mkdir drivers/misc/nxp_simtemp
 
 # Copy driver files to kernel tree
-sudo cp nxp_simtemp.c nxp_simtemp.h nxp_simtemp_ioctl.h Kconfig Makefile drivers/misc/nxp_simtemp/
+sudo cp kernel/* /usr/src/linux-hwe-6.8-6.8.0/drivers/misc/nxp_simtemp/
 ```
 
 #### 3. Update Kernel Configuration
@@ -58,21 +63,78 @@ Edit `drivers/misc/Kconfig` and add:
 source "drivers/misc/nxp_simtemp/Kconfig"
 ```
 
-#### 4. Configure and Build
+#### 4. Configure and Build 
 ```bash
+#On your linux foilder
 make menuconfig
 # Navigate to: Device Drivers → Misc devices → Simulated Temperature device driver
 # Set to <M> for module
 
 make modules -j$(nproc)
+
+#or compile just the folder
+sudo make M=drivers/misc modules
+```
+
+#### 5. Compile the dtb for the frdm 
+```bash
+#on linux-imx
+$ sudo apt-get install gcc-aarch64-linux-gnu
+$ make -j $(nproc --all) imx_v8_defconfig ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+$ make -j $(nproc --all) freescale/imx93-11x11-frdm-simtemp.dtb ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+```
+This generates the custom DTB at:
+arch/arm64/boot/dts/freescale/imx93-11x11-frdm-simtemp.dtb
+
+#### 6. Compile Your Kernel Module
+
+Now compile your driver using the cross-compiler:
+```bash
+$ cd ~/linux-imx
+$ make M=/home/gaby/Documents/NXP_challenge/simtemp/kernel modules ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+
+# Or, from within your module directory:
+
+$ cd /home/gaby/Documents/NXP_challenge/simtemp/kernel
+$ make -C ~/linux-imx M=$(pwd) modules ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+
+# Alternatively, use the helper script:
+
+$ ./build_module.sh
+```
+#### 6.1 Verify the Cross-Compiled Module
+```bash
+$ file nxp_simtemp.ko
+#Expected output: ELF 64-bit LSB relocatable, ARM aarch64, version 1 (SYSV), not stripped
+
+$ aarch64-linux-gnu-readelf -h nxp_simtemp.ko | grep Machine
+#Expected output: Machine: AArch64
+```
+
+5. Prepare for Deployment
+```bash
+$ mkdir -p frdm_deployment
+$ cp /home/gaby/Documents/NXP_challenge/simtemp/kernel/nxp_simtemp.ko frdm_deployment/
+$ cp ~/linux-imx/arch/arm64/boot/dts/freescale/imx93-11x11-frdm-simtemp.dtb frdm_deployment/
+$ ls -la frdm_deployment/
+```
+
+6. Deploy to FRDM Board
+
+```bash
+sudo cp frdm_deployment/imx93-11x11-frdm-simtemp.dtb /media/boot/your-sd-card/
+sudo cp frdm_deployment/nxp_simtemp.ko /home/root/
 ```
 
 ---
 
-## Usage
+## Testing on the FRDM Board
+
+After booting with the new DTB:
 
 ### Loading the Module
 ```bash
+insmod nxp_simtemp.ko
 # Check if module is loaded
 lsmod | grep nxp_simtemp
 

@@ -1,6 +1,5 @@
 # Kernel build artifacts
 *.o
-*.ko
 *.mod*
 *.symvers
 *.order*
